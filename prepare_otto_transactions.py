@@ -1,22 +1,47 @@
+import argparse
 import pandas as pd
 
-input_file = "train.csv"
-output_file = "otto_transactions.txt"
 
-df = pd.read_csv(input_file)
+def build_arg_parser():
+    parser = argparse.ArgumentParser(
+        description="Convert Otto train.csv into transaction format for ARM."
+    )
+    parser.add_argument(
+        "input",
+        help="Path to Otto train.csv"
+    )
+    parser.add_argument(
+        "--output",
+        default="otto_transactions.txt",
+        help="Output transaction text file. Default: otto_transactions.txt"
+    )
+    parser.add_argument(
+        "--include-target",
+        action="store_true",
+        help="Include target_Class_X as an item in each transaction."
+    )
+    return parser
 
-feature_cols = [c for c in df.columns if c.startswith("feat_")]
 
-with open(output_file, "w", encoding="utf-8") as f:
-    for _, row in df.iterrows():
-        items = []
+def main():
+    args = build_arg_parser().parse_args()
 
-        for c in feature_cols:
-            if row[c] > 0:
-                items.append(c)
+    df = pd.read_csv(args.input)
+    feature_cols = [col for col in df.columns if col.startswith("feat_")]
 
-        # optional: include target as an item
-        if "target" in df.columns:
-            items.append("target_" + str(row["target"]))
+    with open(args.output, "w", encoding="utf-8") as output:
+        for _, row in df.iterrows():
+            items = []
 
-        f.write(",".join(items) + "\n")
+            for col in feature_cols:
+                if row[col] > 0:
+                    items.append(col)
+
+            if args.include_target and "target" in df.columns:
+                items.append("target_" + str(row["target"]))
+
+            output.write(",".join(items) + "\n")
+
+
+if __name__ == "__main__":
+    main()

@@ -89,16 +89,19 @@ def datid(transactions: RDD, min_support: float) -> RDD:
     Returns:
         RDD of (itemset_tuple, support_count, support_fraction).
     """
+    min_support = float(min_support)
+    if min_support <= 0:
+        raise ValueError("min_support must be greater than 0")
+
     sc = transactions.context
     normalized = transactions.map(normalize_transaction).filter(lambda t: len(t) > 0).cache()
     transaction_count = normalized.count()
 
     if transaction_count == 0:
+        normalized.unpersist()
         return sc.emptyRDD()
 
-    threshold = min_support_count(float(min_support), transaction_count)
-    if threshold <= 0:
-        raise ValueError("min_support must be greater than 0")
+    threshold = min_support_count(min_support, transaction_count)
 
     item_counts = (
         normalized.flatMap(lambda transaction: ((item, 1) for item in transaction))
@@ -117,6 +120,8 @@ def datid(transactions: RDD, min_support: float) -> RDD:
     current_itemsets = [itemset for itemset, _ in l1_local]
 
     if not current_itemsets:
+        normalized.unpersist()
+        l1_counts.unpersist()
         return sc.emptyRDD()
 
     ordered_l1 = sorted(
@@ -139,6 +144,7 @@ def datid(transactions: RDD, min_support: float) -> RDD:
         .filter(lambda transaction: len(transaction) > 1)
         .cache()
     )
+    array_data.count()
 
     normalized.unpersist()
     frequent_items_broadcast.unpersist()

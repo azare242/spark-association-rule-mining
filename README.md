@@ -72,6 +72,15 @@ Run the preparation script:
 python prepare_otto_transactions.py train.csv --output otto_transactions.txt --include-target
 ```
 
+The script processes the CSV in chunks to avoid loading and iterating the full dataset row-by-row. The default chunk size is `50000` rows. You can change it if your machine needs smaller or larger batches:
+
+```bash
+python prepare_otto_transactions.py train.csv \
+  --output otto_transactions.txt \
+  --include-target \
+  --chunksize 25000
+```
+
 If you do not want to include the class label in rules:
 
 ```bash
@@ -97,6 +106,8 @@ spark-submit <algorithm_file.py> <input_file> \
 |---|---|
 | `0 < value <= 1` | Fraction of transactions, e.g. `0.2` means 20% |
 | `value > 1` | Absolute support count |
+
+`--min-support` must be greater than `0`. Invalid values fail before Spark starts the mining work.
 
 ---
 
@@ -295,6 +306,8 @@ spark-submit spark_arm.py otto_transactions.txt \
   --master local[*] \
   --output output_rules_datid
 ```
+
+5. The frequent itemset implementations intentionally cache and materialize intermediate Spark RDDs before unpersisting parent RDDs. This keeps the lazy execution lineage stable during longer runs, especially in `datid.py` and `declat.py`.
 
 ---
 

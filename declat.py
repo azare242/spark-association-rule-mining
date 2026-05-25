@@ -61,7 +61,6 @@ def intersect_tidsets(left: TidSet, right: TidSet) -> TidSet:
 
 
 def candidate_prefix_pairs(candidate: Itemset) -> Tuple[Tuple[Itemset, Tuple[Itemset, Item]], Tuple[Itemset, Tuple[Itemset, Item]]]:
-    prefix = candidate[:-2]
     left_parent = candidate[:-1]
     right_parent = candidate[:-2] + candidate[-1:]
     return (
@@ -108,16 +107,19 @@ def declat(transactions: RDD, min_support: float) -> RDD:
     Returns:
         RDD of (itemset_tuple, support_count, support_fraction).
     """
+    min_support = float(min_support)
+    if min_support <= 0:
+        raise ValueError("min_support must be greater than 0")
+
     sc = transactions.context
     normalized = transactions.map(normalize_transaction).filter(lambda t: len(t) > 0).cache()
     transaction_count = normalized.count()
 
     if transaction_count == 0:
+        normalized.unpersist()
         return sc.emptyRDD()
 
-    threshold = min_support_count(float(min_support), transaction_count)
-    if threshold <= 0:
-        raise ValueError("min_support must be greater than 0")
+    threshold = min_support_count(min_support, transaction_count)
 
     transactions_with_tids = normalized.zipWithIndex().map(lambda row: (int(row[1]), row[0])).cache()
     normalized.unpersist()
@@ -133,6 +135,7 @@ def declat(transactions: RDD, min_support: float) -> RDD:
         .mapValues(lambda tids: tuple(sorted(tids)))
         .cache()
     )
+    vertical_data.count()
 
     transactions_with_tids.unpersist()
 
@@ -141,10 +144,17 @@ def declat(transactions: RDD, min_support: float) -> RDD:
         .sortBy(lambda item_tidset: item_tidset[0])
         .cache()
     )
+
+    current_itemsets = [itemset for itemset, _ in current_vertical.collect()]
     vertical_data.unpersist()
 
-    frequent_parts = [current_vertical.mapValues(len)]
-    current_itemsets = [itemset for itemset, _ in current_vertical.collect()]
+    if not current_itemsets:
+        current_vertical.unpersist()
+        return sc.emptyRDD()
+
+    current_counts = current_vertical.mapValues(len).cache()
+    current_counts.count()
+    frequent_parts = [current_counts]
     k = 2
 
     while len(current_itemsets) > 1:
@@ -165,7 +175,9 @@ def declat(transactions: RDD, min_support: float) -> RDD:
             next_vertical.unpersist()
             break
 
-        frequent_parts.append(next_vertical.mapValues(len))
+        next_counts = next_vertical.mapValues(len).cache()
+        next_counts.count()
+        frequent_parts.append(next_counts)
         previous_vertical = current_vertical
         current_vertical = next_vertical
         previous_vertical.unpersist()

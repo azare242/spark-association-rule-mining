@@ -7,20 +7,13 @@ from typing import Iterable, Tuple
 from pyspark import SparkConf, SparkContext
 from pyspark.rdd import RDD
 
-from dapriori import dapriori, parse_transaction_line
+from arm_common import FrequentItemset, Itemset, normalize_itemset, parse_transaction_line
+from dapriori import dapriori
 from datid import datid
 from declat import declat
 
 
-Item = str
-Itemset = Tuple[Item, ...]
-FrequentItemset = Tuple[Itemset, int, float]
 AssociationRule = Tuple[Itemset, Itemset, float, int, float]
-
-
-def normalize_itemset(itemset: Iterable[object]) -> Itemset:
-    """Return a sorted tuple of unique string items from one itemset."""
-    return tuple(sorted({str(item).strip() for item in itemset if str(item).strip()}))
 
 
 def non_empty_proper_subsets(itemset: Itemset) -> Iterable[Itemset]:

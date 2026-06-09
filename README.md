@@ -10,6 +10,8 @@ Implemented files:
 | `datid.py` | Runs Distributed Apriori-TID and outputs frequent itemsets |
 | `declat.py` | Runs Distributed ECLAT and outputs frequent itemsets |
 | `spark_arm.py` | Runs association rule mining using one of the frequent itemset algorithms |
+| `convert_transactions_to_parquet.py` | Converts text transactions into Parquet for streaming |
+| `spark_arm_stream.py` | Runs frequent itemset mining or association rule mining on Spark stream micro-batches |
 
 The input format for all scripts is a plain text transaction file:
 
@@ -89,7 +91,32 @@ python prepare_otto_transactions.py train.csv --output otto_transactions.txt
 
 ---
 
-## 3. Run Frequent Itemset Mining
+## 3. Convert Transactions to Parquet for Streaming
+
+`spark_arm_stream.py` can read text streams or Parquet streams. For the Otto transaction file, convert `otto_transactions.txt` into Parquet first:
+
+```bash
+spark-submit convert_transactions_to_parquet.py otto_transactions.txt \
+  --output otto_transactions_parquet \
+  --delimiter "," \
+  --overwrite \
+  --master local[*]
+```
+
+The Parquet output schema is:
+
+| Column | Type | Meaning |
+|---|---|---|
+| `transaction_id` | `long` | Generated Spark row id |
+| `raw_line` | `string` | Original transaction text |
+| `items` | `array<string>` | Parsed transaction items |
+| `item_count` | `long` | Number of items in the transaction |
+
+Use `--overwrite` only when you want to replace an existing Parquet directory. Without it, Spark fails if the output already exists.
+
+---
+
+## 4. Run Frequent Itemset Mining
 
 All three frequent itemset scripts use the same input arguments:
 
@@ -111,7 +138,7 @@ spark-submit <algorithm_file.py> <input_file> \
 
 ---
 
-### 3.1 Run DApriori
+### 4.1 Run DApriori
 
 ```bash
 spark-submit dapriori.py otto_transactions.txt \
@@ -132,7 +159,7 @@ spark-submit dapriori.py otto_transactions.txt \
 
 ---
 
-### 3.2 Run DATID
+### 4.2 Run DATID
 
 ```bash
 spark-submit datid.py otto_transactions.txt \
@@ -153,7 +180,7 @@ spark-submit datid.py otto_transactions.txt \
 
 ---
 
-### 3.3 Run DECLAT
+### 4.3 Run DECLAT
 
 ```bash
 spark-submit declat.py otto_transactions.txt \
@@ -174,7 +201,7 @@ spark-submit declat.py otto_transactions.txt \
 
 ---
 
-## 4. Run Association Rule Mining
+## 5. Run Association Rule Mining
 
 Use `spark_arm.py` to generate association rules from transactions.
 
@@ -233,7 +260,85 @@ spark-submit spark_arm.py otto_transactions.txt \
 
 ---
 
-## 5. Output Format
+## 6. Run Streaming ARM
+
+`spark_arm_stream.py` uses Spark Structured Streaming with `foreachBatch`. Each micro-batch is converted into the same transaction RDD format used by `dapriori.py`, `datid.py`, and `declat.py`.
+
+By default, the stream uses `availableNow=True`: Spark processes files currently available in the input directory and exits. Add `--continuous` to keep the stream running for new files.
+
+### 6.1 Streaming Frequent Itemsets from Parquet
+
+```bash
+spark-submit spark_arm_stream.py otto_transactions_parquet \
+  --source-format parquet \
+  --mode frequent-itemsets \
+  --algorithm dapriori \
+  --min-support 0.45 \
+  --checkpoint checkpoints/stream_fim_dapriori \
+  --master local[*]
+```
+
+Save output per micro-batch:
+
+```bash
+spark-submit spark_arm_stream.py otto_transactions_parquet \
+  --source-format parquet \
+  --mode frequent-itemsets \
+  --algorithm datid \
+  --min-support 0.45 \
+  --checkpoint checkpoints/stream_fim_datid \
+  --output stream_fim_datid_out \
+  --master local[*]
+```
+
+Output is written under batch directories:
+
+```text
+stream_fim_datid_out/batch_id=0/part-00000
+```
+
+### 6.2 Streaming Association Rules from Parquet
+
+```bash
+spark-submit spark_arm_stream.py otto_transactions_parquet \
+  --source-format parquet \
+  --mode rules \
+  --algorithm declat \
+  --min-support 0.45 \
+  --min-confidence 0.75 \
+  --checkpoint checkpoints/stream_rules_declat \
+  --output stream_rules_declat_out \
+  --master local[*]
+```
+
+### 6.3 Streaming from Text
+
+For text streaming, pass an input directory containing transaction text files. Spark file streams are designed around directories of files rather than a single file that is repeatedly modified.
+
+```bash
+spark-submit spark_arm_stream.py stream_text_input \
+  --source-format text \
+  --mode frequent-itemsets \
+  --algorithm dapriori \
+  --min-support 0.45 \
+  --delimiter "," \
+  --checkpoint checkpoints/stream_text_dapriori \
+  --master local[*]
+```
+
+### 6.4 Streaming Algorithm Choices
+
+`--algorithm` accepts:
+
+- `dapriori`
+- `datid`
+- `declat`
+
+`--min-support` is evaluated per micro-batch. A value in `(0, 1]` is a fraction of the transactions in that micro-batch; a value greater than `1` is an absolute support count.
+
+---
+
+## 7. Output Format
 
 Frequent itemset output:
 
@@ -269,7 +374,7 @@ Get-Content output_rules_datid\part-*
 
 ---
 
-## 6. Important Notes
+## 8. Important Notes
 
 1. Spark output directories must not already exist. If the output directory exists, delete it first:
 
@@ -309,9 +414,11 @@ spark-submit spark_arm.py otto_transactions.txt \
 
 5. The frequent itemset implementations intentionally cache and materialize intermediate Spark RDDs before unpersisting parent RDDs. This keeps the lazy execution lineage stable during longer runs, especially in `datid.py` and `declat.py`.
 
+6. Streaming output directories are created per micro-batch, for example `stream_rules_declat_out/batch_id=0`. The same Spark rule applies: output and checkpoint directories should not conflict with old runs unless you intentionally reuse checkpoints.
+
 ---
 
-## 7. Minimal End-to-End Example
+## 9. Minimal End-to-End Example
 
 ```bash
 python prepare_otto_transactions.py train.csv \
@@ -327,4 +434,30 @@ spark-submit spark_arm.py otto_transactions.txt \
   --output output_rules_datid
 
 cat output_rules_datid/part-*
+```
+
+Streaming Parquet path:
+
+```bash
+python prepare_otto_transactions.py train.csv \
+  --output otto_transactions.txt \
+  --include-target
+
+spark-submit convert_transactions_to_parquet.py otto_transactions.txt \
+  --output otto_transactions_parquet \
+  --delimiter "," \
+  --overwrite \
+  --master local[*]
+
+spark-submit spark_arm_stream.py otto_transactions_parquet \
+  --source-format parquet \
+  --mode rules \
+  --algorithm datid \
+  --min-support 0.45 \
+  --min-confidence 0.75 \
+  --checkpoint checkpoints/stream_rules_datid \
+  --output stream_rules_datid_out \
+  --master local[*]
+
+cat stream_rules_datid_out/batch_id=0/part-*
 ```
